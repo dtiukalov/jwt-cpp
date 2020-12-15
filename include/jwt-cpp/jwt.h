@@ -1918,6 +1918,8 @@ namespace jwt {
 
 		public:
 			using basic_claim_t = basic_claim<json_traits>;
+			using iterator = typename json_traits::object_type::iterator;
+			using const_iterator = typename json_traits::object_type::const_iterator;
 
 			map_of_claims() = default;
 			map_of_claims(const map_of_claims&) = default;
@@ -1926,6 +1928,13 @@ namespace jwt {
 			map_of_claims& operator=(map_of_claims&&) = default;
 
 			map_of_claims(typename json_traits::object_type json) : claims(std::move(json)) {}
+
+			iterator begin() { return claims.begin(); }
+			iterator end() { return claims.end(); }
+			const_iterator cbegin() const { return claims.begin(); }
+			const_iterator cend() const { return claims.end(); }
+			const_iterator begin() const { return claims.begin(); }
+			const_iterator end() const { return claims.end(); }
 
 			/**
 			 * \brief Parse a JSON string into a map of claims 
@@ -1958,6 +1967,13 @@ namespace jwt {
 				if (!has_claim(name))
 					throw error::claim_not_present_exception();
 				return basic_claim_t{ claims.at(name) };
+			}
+
+			std::unordered_map<typename json_traits::string_type, basic_claim_t> get_claims() const {
+				std::unordered_map<typename json_traits::string_type, basic_claim_t> res;			
+				std::transform(claims.begin(), claims.end(), std::inserter(res, res.end()),
+					[](const typename json_traits::object_type::value_type& val){ return std::make_pair(val.first, basic_claim_t{val.second}); });
+				return res;
 			}
 		};
 	}
@@ -2169,6 +2185,7 @@ namespace jwt {
 		/// Unmodified signature part in base64
 		typename json_traits::string_type signature_base64;
 	public:
+		using basic_claim_t = basic_claim<json_traits>;
 	#ifndef JWT_DISABLE_BASE64
 		/**
 		 * \brief Parses a given token
@@ -2257,15 +2274,15 @@ namespace jwt {
 		 * Get all payload claims
 		 * \return map of claims
 		 */
-		std::unordered_map<typename json_traits::string_type, basic_claim<json_traits>> get_payload_claims() const {
-			return this->payload_claims;
+		std::unordered_map<typename json_traits::string_type, basic_claim_t> get_payload_claims() const {
+			return this->payload_claims.get_claims();
 		}
 		/**
 		 * Get all header claims
 		 * \return map of claims
 		 */
-		std::unordered_map<typename json_traits::string_type, basic_claim<json_traits>> get_header_claims() const {
-			return this->header_claims;
+		std::unordered_map<typename json_traits::string_type, basic_claim_t> get_header_claims() const {
+			return this->header_claims.get_claims();
 		}
 	};
 
@@ -3027,12 +3044,12 @@ namespace jwt {
 	}
 	
 	inline
-		jwk<picojson_traits> parse_jwk(const picojson_traits::string_type& token) {
+	jwk<picojson_traits> parse_jwk(const picojson_traits::string_type& token) {
 		return jwk<picojson_traits>(token);
 	}
 
 	inline
-		jwks<picojson_traits> parse_jwks(const picojson_traits::string_type& token) {
+	jwks<picojson_traits> parse_jwks(const picojson_traits::string_type& token) {
 		return jwks<picojson_traits>(token);
 	}
 #endif
