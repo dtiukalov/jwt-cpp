@@ -2789,6 +2789,9 @@ namespace jwt {
 
 	public:
 		using jwk_t = jwk<json_traits>;
+		using jwt_vector_t = std::vector<jwk_t>;
+		using iterator = typename jwt_vector_t::iterator;
+		using const_iterator = typename jwt_vector_t::const_iterator;
 
 		JWT_CLAIM_EXPLICIT jwks(const typename json_traits::string_type& str) {
 			typename json_traits::value_type val;
@@ -2804,12 +2807,12 @@ namespace jwt {
 				[](const typename json_traits::value_type& val){ return jwk_t{val}; });
 		}
 
-		auto begin() { return jwk_claims.begin(); }
-		auto end() { return jwk_claims.end(); }
-		auto cbegin() const { return jwk_claims.begin(); }
-		auto cend() const { return jwk_claims.end(); }
-		auto begin() const { return jwk_claims.begin(); }
-		auto end() const { return jwk_claims.end(); }
+		iterator begin() { return jwk_claims.begin(); }
+		iterator end() { return jwk_claims.end(); }
+		const_iterator cbegin() const { return jwk_claims.begin(); }
+		const_iterator cend() const { return jwk_claims.end(); }
+		const_iterator begin() const { return jwk_claims.begin(); }
+		const_iterator end() const { return jwk_claims.end(); }
 
 		/**
 		 * Check if a jwk with the kid is present
@@ -2823,16 +2826,16 @@ namespace jwt {
 		 * \throw std::runtime_error If jwk was not present
 		 */
 		jwk_t get_jwk(const typename json_traits::string_type& key_id) const {
-			auto maybe = find_by_kid(key_id);
+			const auto maybe = find_by_kid(key_id);
 			if (maybe == end())
 				throw error::claim_not_present_exception();
 			return *maybe;
 		}
 
 	private:
-		std::vector<jwk_t> jwk_claims;
+		jwt_vector_t jwk_claims;
 
-		auto find_by_kid(const typename json_traits::string_type& key_id) const noexcept{
+		const_iterator find_by_kid(const typename json_traits::string_type& key_id) const noexcept{
 			return std::find_if(cbegin(), cend(), [key_id](const jwk_t& jwk) {
 				if(!jwk.has_key_id()) {
 					return false;
