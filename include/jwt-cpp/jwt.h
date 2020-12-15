@@ -1902,16 +1902,78 @@ namespace jwt {
 			}
 	};
 
+	namespace error {
+		struct invalid_json_exception : public std::runtime_error {
+			invalid_json_exception() : runtime_error("invalid json"){}
+		};
+		struct claim_not_present_exception : public std::runtime_error {
+			claim_not_present_exception() : runtime_error("claim not found"){}
+		};
+	}
+
+	namespace details {
+		template<typename json_traits>
+		class map_of_claims{
+			typename json_traits::object_type claims;
+
+		public:
+			using basic_claim_t = basic_claim<json_traits>;
+
+			map_of_claims() = default;
+			map_of_claims(const map_of_claims&) = default;
+			map_of_claims(map_of_claims&&) = default;
+			map_of_claims& operator=(const map_of_claims&) = default;
+			map_of_claims& operator=(map_of_claims&&) = default;
+
+			map_of_claims(typename json_traits::object_type json) : claims(std::move(json)) {}
+
+			/**
+			 * \brief Parse a JSON string into a map of claims 
+			 * 
+			 * The implication is that a "map of claims" is identic to a JSON object
+			 * 
+			 * \param str JSON data to be parse as an object
+			 * \return content as JSON object
+			 */
+			static typename json_traits::object_type parse_claims(const typename json_traits::string_type& str) {
+				typename json_traits::value_type val;
+				if (!json_traits::parse(val, str))
+					throw error::invalid_json_exception();
+					
+				return json_traits::as_object(val);
+			};
+
+			/**
+			 * Check if a payload claim is present
+			 * \return true if claim was present, false otherwise
+			 */
+			bool has_claim(const typename json_traits::string_type& name) const noexcept { return claims.count(name) != 0; }
+
+			/**
+			 * Get payload claim
+			 * \return Requested claim
+			 * \throw jwt::error::claim_not_present_exception If claim was not present
+			 */
+			basic_claim_t get_claim(const typename json_traits::string_type& name) const {
+				if (!has_claim(name))
+					throw error::claim_not_present_exception();
+				return basic_claim_t{ claims.at(name) };
+			}
+		};
+	}
+
 	/**
 	 * Base class that represents a token payload.
 	 * Contains Convenience accessors for common claims.
 	 */
 	template<typename json_traits>
 	class payload {
-		using basic_claim_t = basic_claim<json_traits>;
 	protected:
-		std::unordered_map<typename json_traits::string_type, basic_claim_t> payload_claims;
+		details::map_of_claims<json_traits> payload_claims;
+	
 	public:
+		using basic_claim_t = basic_claim<json_traits>;
+
 		/**
 		 * Check if issuer is present ("iss")
 		 * \return true if present, false otherwise
@@ -2006,17 +2068,13 @@ namespace jwt {
 		 * Check if a payload claim is present
 		 * \return true if claim was present, false otherwise
 		 */
-		bool has_payload_claim(const typename json_traits::string_type& name) const noexcept { return payload_claims.count(name) != 0; }
+		bool has_payload_claim(const typename json_traits::string_type& name) const noexcept { return payload_claims.has_claim(name); }
 		/**
 		 * Get payload claim
 		 * \return Requested claim
 		 * \throw std::runtime_error If claim was not present
 		 */
-		basic_claim_t get_payload_claim(const typename json_traits::string_type& name) const {
-			if (!has_payload_claim(name))
-				throw std::runtime_error("claim not found");
-			return payload_claims.at(name);
-		}
+		basic_claim_t get_payload_claim(const typename json_traits::string_type& name) const { return payload_claims.get_claim(name); }
 	};
 
 	/**
@@ -2025,10 +2083,10 @@ namespace jwt {
 	 */
 	template<typename json_traits>
 	class header {
-		using basic_claim_t = basic_claim<json_traits>;
 	protected:
-		std::unordered_map<typename json_traits::string_type, basic_claim_t> header_claims;
+		details::map_of_claims<json_traits> header_claims;
 	public:
+		using basic_claim_t = basic_claim<json_traits>;
 		/**
 		 * Check if algortihm is present ("alg")
 		 * \return true if present, false otherwise
@@ -2081,17 +2139,13 @@ namespace jwt {
 		 * Check if a header claim is present
 		 * \return true if claim was present, false otherwise
 		 */
-		bool has_header_claim(const typename json_traits::string_type& name) const noexcept { return header_claims.count(name) != 0; }
+		bool has_header_claim(const typename json_traits::string_type& name) const noexcept { return header_claims.has_claim(name); }
 		/**
 		 * Get header claim
 		 * \return Requested claim
 		 * \throw std::runtime_error If claim was not present
 		 */
-		basic_claim_t get_header_claim(const typename json_traits::string_type& name) const {
-			if (!has_header_claim(name))
-				throw std::runtime_error("claim not found");
-			return header_claims.at(name);
-		}
+		basic_claim_t get_header_claim(const typename json_traits::string_type& name) const { return header_claims.get_claim(name); }
 	};
 
 	/**
@@ -2160,22 +2214,8 @@ namespace jwt {
 			payload = decode(payload_base64);
 			signature = decode(signature_base64);
 
-			auto parse_claims = [](const typename json_traits::string_type& str) {
-				using basic_claim_t = basic_claim<json_traits>;
-				std::unordered_map<typename json_traits::string_type, basic_claim_t> res;
-				typename json_traits::value_type val;
-				if (!json_traits::parse(val, str))
-					throw std::runtime_error("Invalid json");
-
-				for (const auto& e : json_traits::as_object(val)) {
-					res.emplace(e.first, basic_claim_t(e.second));
-				}
-
-				return res;
-			};
-
-			this->header_claims = parse_claims(header);
-			this->payload_claims = parse_claims(payload);
+			this->header_claims = details::map_of_claims<json_traits>::parse_claims(header);
+			this->payload_claims = details::map_of_claims<json_traits>::parse_claims(payload);
 		}
 
 		/**
@@ -2675,30 +2715,15 @@ namespace jwt {
 	template<typename json_traits>
 	class jwk {
 		using basic_claim_t = basic_claim<json_traits>;
+		details::map_of_claims<json_traits> jwk_claims;		
 
 	public:
-		JWT_CLAIM_EXPLICIT jwk(const typename json_traits::string_type& jwk_token) {
-			auto parse_claims = [](const typename json_traits::string_type& str) {
-				using basic_claim_t = basic_claim<json_traits>;
-				std::unordered_map<typename json_traits::string_type, basic_claim_t> res;
-				typename json_traits::value_type val;
-				if (!json_traits::parse(val, str))
-					throw std::runtime_error("Invalid json");
-
-				for (const auto& e : json_traits::as_object(val)) {
-					res.emplace(e.first, basic_claim_t(e.second));
-				}
-
-				return res;
-			};
-
-			jwk_claims = parse_claims(jwk_token);
+		JWT_CLAIM_EXPLICIT jwk(const typename json_traits::string_type& str) {
+			jwk_claims = details::map_of_claims<json_traits>::parse_claims(str);
 		}
 		
-		JWT_CLAIM_EXPLICIT jwk(const typename json_traits::value_type& claim) {
-			for (const auto& e : json_traits::as_object(claim)) {
-				jwk_claims.emplace(e.first, basic_claim_t(e.second));
-			}
+		JWT_CLAIM_EXPLICIT jwk(const typename json_traits::value_type& json) {
+			jwk_claims = { json_traits::as_object(json) };
 		}
 
 		/**
@@ -2747,57 +2772,50 @@ namespace jwt {
 		 * Check if a jwks claim is present
 		 * \return true if claim was present, false otherwise
 		 */
-		bool has_jwk_claim(const typename json_traits::string_type& name) const noexcept { return jwk_claims.count(name) != 0; }
+		bool has_jwk_claim(const typename json_traits::string_type& name) const noexcept { return jwk_claims.has_claim(name); }
 
 		/**
 		 * Get jwks claim
 		 * \return Requested claim
 		 * \throw std::runtime_error If claim was not present
 		 */
-		basic_claim_t get_jwk_claim(const typename json_traits::string_type& name) const {
-			if (!has_jwk_claim(name)) {
-				throw std::runtime_error("claim not found");
-			}
-			return jwk_claims.at(name);
-		}
+		basic_claim_t get_jwk_claim(const typename json_traits::string_type& name) const { return jwk_claims.get_claim(name); }
 
 		bool empty() const noexcept { return jwk_claims.empty(); }
-
-	private:
-		std::unordered_map<typename json_traits::string_type, basic_claim_t> jwk_claims;
 	};
 
 	template<typename json_traits>
 	class jwks {
-		using basic_claim_t = basic_claim<json_traits>;
-		using jwk_t = jwk<json_traits>;
 
 	public:
+		using jwk_t = jwk<json_traits>;
 
-		JWT_CLAIM_EXPLICIT jwks(const typename json_traits::string_type& jwks_token) {
-			auto parse_claims = [](const typename json_traits::string_type& str) {
-				std::unordered_map<typename json_traits::string_type, jwk_t> res;
-				typename json_traits::value_type val;
-				if (!json_traits::parse(val, str))
-					throw std::runtime_error("Invalid json");
+		JWT_CLAIM_EXPLICIT jwks(const typename json_traits::string_type& str) {
+			typename json_traits::value_type val;
+			if (!json_traits::parse(val, str))
+				throw error::invalid_json_exception();
 
-				for (const auto& k : json_traits::as_object(val)) {
-					size_t id = 0;
-					for (const typename json_traits::value_type& item : json_traits::as_array(k.second)) {
-						jwk_t jwk_entry(item);
-						if (jwk_entry.has_key_id())
-							res.emplace(jwk_entry.get_key_id(), std::move(jwk_entry));
-						else
-							res.emplace(std::to_string(id), std::move(jwk_entry));
-						++id;
-					}
-				}
+			const details::map_of_claims<json_traits> jwks_json = json_traits::as_object(val);
+			if(!jwks_json.has_claim("keys"))
+				throw error::invalid_json_exception();
 
-				return res;
-			};
-
-			jwks_claims = parse_claims(jwks_token);
+			auto jwk_list = jwks_json.get_claim("keys").as_array();
+			std::transform(jwk_list.begin(), jwk_list.end(), std::back_inserter(jwk_claims),
+				[](const typename json_traits::value_type& val){ return jwk_t{val}; });
 		}
+
+		auto begin() { return jwk_claims.begin(); }
+		auto end() { return jwk_claims.end(); }
+		auto cbegin() const { return jwk_claims.begin(); }
+		auto cend() const { return jwk_claims.end(); }
+		auto begin() const { return jwk_claims.begin(); }
+		auto end() const { return jwk_claims.end(); }
+
+		/**
+		 * Check if a jwk with the kid is present
+		 * \return true if jwk was present, false otherwise
+		 */
+		bool has_jwk(const typename json_traits::string_type& key_id) const noexcept { return find_by_kid(key_id) != end(); }
 
 		/**
 		 * Get jwk
@@ -2805,35 +2823,23 @@ namespace jwt {
 		 * \throw std::runtime_error If jwk was not present
 		 */
 		jwk_t get_jwk(const typename json_traits::string_type& key_id) const {
-			if (!has_jwk(key_id)) {
-				typename json_traits::string_type error_msg = "jwk with key id \"";
-				error_msg += key_id;
-				error_msg += "\" not found";
-				throw std::runtime_error(error_msg.c_str());
-			}
-
-			return jwks_claims.at(key_id);
-		}
-
-		/**
-		 * Check if a jwks with the kid is present
-		 * \return true if jwks was present, false otherwise
-		 */
-		bool has_jwk(const typename json_traits::string_type& key_id) const noexcept { return jwks_claims.count(key_id) != 0; }
-
-		bool empty() const noexcept { return jwks_claims.empty(); }
-		
-		std::vector<jwk_t> to_vector() {
-			std::vector<jwk_t> v_jwks_claims;
-			v_jwks_claims.reserve(jwks_claims.size());
-			for (const auto& element : jwks_claims)
-   				v_jwks_claims.push_back(element.second);
-			return v_jwks_claims;
+			auto maybe = find_by_kid(key_id);
+			if (maybe == end())
+				throw error::claim_not_present_exception();
+			return *maybe;
 		}
 
 	private:
+		std::vector<jwk_t> jwk_claims;
 
-		std::unordered_map<typename json_traits::string_type, jwk_t> jwks_claims;
+		auto find_by_kid(const typename json_traits::string_type& key_id) const noexcept{
+			return std::find_if(cbegin(), cend(), [key_id](const jwk_t& jwk) {
+				if(!jwk.has_key_id()) {
+					return false;
+				}
+				return jwk.get_key_id() == key_id;
+			});
+		}
 	};
 
 	/**
